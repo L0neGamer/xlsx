@@ -539,10 +539,7 @@ readSheet (MkSheetIndex sheetId) inner = do
   case mSrc of
     Nothing -> pure False
     Just sourceSheetXml -> do
-      sharedStrs <- getOrParseSharedStringss
-      let sheetState0 = initialParserState
-            & ps_shared_strings .~ sharedStrs
-            & ps_sheet_index .~ sheetId
+      sheetState0 <- makeInitialParserState (MkSheetIndex sheetId)
       runExpatForSheet sheetState0 sourceSheetXml inner
       pure True
 
