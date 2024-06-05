@@ -79,10 +79,6 @@ tests =
       [ testCase "Can parse RichText values" richCellTextIsParsed
       ],
 
-
-      testGroup "Reader/shared strings"
-      [ testCase "Can parse RichText values" richCellTextIsParsed
-      ],
       testGroup "Reader/Writer"
       [ testCase "Write as stream, see if memory based implementation can read it" $ readWrite simpleWorkbook
       , testCase "Write as stream, see if memory based implementation can read it" $ readWrite simpleWorkbookRow
