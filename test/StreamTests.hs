@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE TupleSections     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -20,6 +21,7 @@ tests = testGroup
     []
 #else
 
+import qualified "zip" Codec.Archive.Zip as Zip
 import Control.Exception
 import Codec.Archive.Zip as Zip
 import Codec.Xlsx
@@ -33,6 +35,7 @@ import Control.Monad (void)
 import Data.Set.Lens
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.ByteString as BS
+import qualified Data.List as Lst
 import Data.Map (Map)
 import qualified Data.Conduit.Combinators as C
 import qualified Data.Map as M
@@ -77,6 +80,9 @@ tests =
       ],
 
 
+      testGroup "Reader/shared strings"
+      [ testCase "Can parse RichText values" richCellTextIsParsed
+      ],
       testGroup "Reader/Writer"
       [ testCase "Write as stream, see if memory based implementation can read it" $ readWrite simpleWorkbook
       , testCase "Write as stream, see if memory based implementation can read it" $ readWrite simpleWorkbookRow

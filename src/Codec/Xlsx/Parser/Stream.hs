@@ -261,11 +261,10 @@ initialSharedStrings = MkSharedStringsState
 -- | Parse shared string entry from xml event and return it once
 -- we've reached the end of given element
 {-# SCC parseSharedStrings #-}
-parseSharedStrings
-  :: ( MonadThrow m
-     , HasSharedStringsState m
-     )
-  => HexpatEvent -> m (Maybe Text)
+parseSharedStrings ::
+  ( MonadThrow m, HasSharedStringsState m )
+  => HexpatEvent
+  -> m (Maybe Text)
 parseSharedStrings = \case
   -- TODO: Add parsing of text styles to further create CellRich values.
   StartElement "si" _ -> Nothing <$ (ss_string .= mempty)
