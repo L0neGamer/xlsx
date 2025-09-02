@@ -117,6 +117,7 @@ import Control.Monad.Base
 import Control.Monad.Trans.Control
 import Text.XML.Expat.Internal.IO as Hexpat
 import Text.XML.Expat.SAX as Hexpat
+import Codec.Xlsx.Types
 
 #ifdef USE_MICROLENS
 (<>=) :: (MonadState s m, Monoid a) => ASetter' s a -> a -> m ()
@@ -161,7 +162,7 @@ data ExcelValueType
   deriving stock (Generic, Show)
 
 -- | State for parsing sheets
-data SheetState = MkSheetState
+data ParserState = MkParserState
   { _ps_row             :: ~CellRow        -- ^ Current row
   , _ps_sheet_index     :: Int             -- ^ Current sheet ID (AKA 'sheetInfoSheetId')
   , _ps_cell_row_index  :: RowIndex        -- ^ Current row number
@@ -177,7 +178,7 @@ data SheetState = MkSheetState
   -- ^ For hexpat only, which can throw errors right at the end of the sheet
   -- rather than ending gracefully.
   } deriving stock (Generic, Show)
-makeLenses 'MkSheetState
+makeLenses 'MkParserState
 
 -- | State for parsing shared strings
 data SharedStringsState = MkSharedStringsState
@@ -188,7 +189,7 @@ data SharedStringsState = MkSharedStringsState
   } deriving stock (Generic, Show)
 makeLenses 'MkSharedStringsState
 
-type HasSheetState = MonadState SheetState
+type HasParserState = MonadState ParserState
 type HasSharedStringsState = MonadState SharedStringsState
 
 -- | Represents sheets from the workbook.xml file. E.g.
@@ -198,7 +199,9 @@ data SheetInfo = SheetInfo
     -- | The r:id attribute value.
     sheetInfoRelId   :: RefId,
     -- | The sheetId attribute value
-    sheetInfoSheetId :: Int
+    sheetInfoSheetId :: Int,
+    -- | The sheet visibility state
+    sheetInfoState    :: SheetState
   } deriving (Show, Eq)
 
 -- | Information about the workbook contained in xl/workbook.xml
@@ -229,8 +232,8 @@ newtype XlsxM a = XlsxM {_unXlsxM :: ReaderT XlsxMState Zip.ZipArchive a}
     )
 
 -- | Initial parsing state
-initialSheetState :: SheetState
-initialSheetState = MkSheetState
+initialParserState :: ParserState
+initialParserState = MkParserState
   { _ps_row             = mempty
   , _ps_sheet_index     = 0
   , _ps_cell_row_index  = 0
@@ -305,8 +308,16 @@ readWorkbookInfo = do
        nm <- lookupBy "name" attrs
        sheetId <- lookupBy "sheetId" attrs
        rId <- lookupBy "r:id" attrs
+       sheetState <- case lookup "state" attrs of
+         Nothing -> pure Visible -- default to visible if not found
+         Just ss -> case ss of
+           "visible"  -> pure Visible
+           "hidden"   -> pure Hidden
+           "veryHidden" -> pure VeryHidden
+           _          -> throwM $ InvalidSheetState ss
        sheetNum <- either (throwM . ParseDecimalError sheetId) pure $ eitherDecimal sheetId
-       modify' (SheetInfo nm (RefId rId) sheetNum :)
+       let info = SheetInfo nm (RefId rId) sheetNum sheetState
+       modify' (info :)
      _ -> pure ()
    pure $ WorkbookInfo sheets
 
@@ -416,7 +427,7 @@ runExpat initialState byteSource handler = do
   readIORef ref
 
 runExpatForSheet ::
-  SheetState ->
+  ParserState ->
   ConduitT () ByteString (C.ResourceT IO) () ->
   (SheetItem -> IO ()) ->
   XlsxM ()
@@ -482,7 +493,7 @@ readSheet (MkSheetIndex sheetId) inner = do
     Nothing -> pure False
     Just sourceSheetXml -> do
       sharedStrs <- getOrParseSharedStringss
-      let sheetState0 = initialSheetState
+      let sheetState0 = initialParserState
             & ps_shared_strings .~ sharedStrs
             & ps_sheet_index .~ sheetId
       runExpatForSheet sheetState0 sourceSheetXml inner
@@ -504,7 +515,7 @@ countRowsInSheet (MkSheetIndex sheetId) = do
         _                    -> pure ()
 
 -- | Return row from the state and empty it
-popRow :: HasSheetState m => m CellRow
+popRow :: HasParserState m => m CellRow
 popRow = do
   row <- use ps_row
   ps_row .= mempty
@@ -546,7 +557,7 @@ parseUntypedValue = CellText
 {-# SCC addCellToRow #-}
 addCellToRow
   :: ( MonadError SheetErrors m
-     , HasSheetState m
+     , HasParserState m
      )
   => Text -> m ()
 addCellToRow txt = do
@@ -591,13 +602,14 @@ data TypeError
 
 data WorkbookError = LookupError { lookup_attrs :: [(ByteString, Text)], lookup_field :: ByteString }
                    | ParseDecimalError Text String
+                   | InvalidSheetState Text
   deriving Show
   deriving anyclass Exception
 
 {-# SCC matchHexpatEvent #-}
 matchHexpatEvent ::
   ( MonadError SheetErrors m,
-    HasSheetState m
+    HasParserState m
   ) =>
   HexpatEvent ->
   m (Maybe CellRow)
@@ -636,7 +648,7 @@ matchHexpatEvent ev = case ev of
 
 {-# INLINE finaliseCellValue #-}
 finaliseCellValue ::
-  ( MonadError SheetErrors m, HasSheetState m ) => m ()
+  ( MonadError SheetErrors m, HasParserState m ) => m ()
 finaliseCellValue = do
   txt <- gets _ps_text_buf
   addCellToRow txt
@@ -649,7 +661,7 @@ finaliseCellValue = do
 {-# SCC setCoord #-}
 setCoord
   :: ( MonadError SheetErrors m
-     , HasSheetState m
+     , HasParserState m
      )
   => SheetValues -> m ()
 setCoord list = do
@@ -660,7 +672,7 @@ setCoord list = do
 -- | Parse type from values and update state accordingly
 setType
   :: ( MonadError SheetErrors m
-     , HasSheetState m
+     , HasParserState m
  )
   => SheetValues -> m ()
 setType list = do
@@ -672,7 +684,7 @@ findName :: ByteString -> SheetValues -> Maybe SheetValue
 findName name = find ((name ==) . fst)
 {-# INLINE findName #-}
 
-setStyle :: (MonadError SheetErrors m, HasSheetState m) => SheetValues -> m ()
+setStyle :: (MonadError SheetErrors m, HasParserState m) => SheetValues -> m ()
 setStyle list = do
   style <- liftEither $ first ParseStyleErrors $ parseStyle list
   ps_cell_style .= style
