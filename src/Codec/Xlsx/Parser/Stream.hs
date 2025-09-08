@@ -40,7 +40,7 @@ module Codec.Xlsx.Parser.Stream
   , runXlsxM
   , WorkbookInfo(..)
   , SheetInfo(..)
-  , SheetState(..)
+  , ParserState(..)
   , wiSheets
   , getOrParseSharedStringss
   , getWorkbookInfo
