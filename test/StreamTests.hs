@@ -170,7 +170,7 @@ readWriteConduitNoSst input = do
     mConduit <- getSheetConduit $ makeIndex 1
     case mConduit of
       Nothing -> error "sheet should exist"
-      Just conduit -> liftIO $ runConduitRes $ void (SW.writeXlsxWithSharedStrings SW.defaultSettings mempty (conduit .| CC.map (view si_row))) .| C.foldC
+      Just conduit -> liftIO $ runConduitRes $ void (SW.writeXlsxWithSharedStrings SW.defaultSettings mempty [("Sheet1", conduit .| CC.map (view si_row))]) .| C.foldC
 
   case toXlsxEither $ LB.fromStrict bs of
     Right result  ->

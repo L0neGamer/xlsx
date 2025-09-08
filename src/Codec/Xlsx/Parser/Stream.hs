@@ -406,7 +406,7 @@ getSheetConduit ::
   -> XlsxM (Maybe (ConduitT () SheetItem m ()))
 getSheetConduit (MkSheetIndex sheetId) = do
   msource <- getSheetXmlSource sheetId
-  initState <- makeInitialSheetState (MkSheetIndex sheetId)
+  initState <- makeInitialParserState (MkSheetIndex sheetId)
   pure $ msource <&> \source -> do
     (parseChunk, _getLoc) <- liftIO $ Hexpat.hexpatNewParser Nothing Nothing False
     stateRef <- liftIO $ newIORef initState
@@ -416,41 +416,41 @@ getSheetConduit (MkSheetIndex sheetId) = do
       .| CC.map (MkSheetItem sheetId)
 
 -- | Extends the functionality of @getSheetConduit@
--- by allowing the stream to be terminated at some state of the SheetState.
+-- by allowing the stream to be terminated at some state of the ParserState.
 getSheetConduitWhile ::
   (MonadIO m, PrimMonad m, MonadThrow m, C.MonadResource m)
-  => (SheetState -> Bool)
+  => (ParserState -> Bool)
   -> SheetIndex
   -> XlsxM (Maybe (ConduitT () SheetItem m ()))
 getSheetConduitWhile checkState (MkSheetIndex sheetId) = do
   msource <- getSheetXmlSource sheetId
-  initState <- makeInitialSheetState (MkSheetIndex sheetId)
+  initState <- makeInitialParserState (MkSheetIndex sheetId)
   pure $ msource <&> \source -> do
     (parseChunk, _getLoc) <- liftIO $ Hexpat.hexpatNewParser Nothing Nothing False
     stateRef <- liftIO $ newIORef initState
     source
       .| expatConduit parseChunk
-      .| checkSheetStateC stateRef checkState
+      .| checkParserStateC stateRef checkState
       .| saxRowConduit stateRef
       .| CC.map (MkSheetItem sheetId)
 
-checkSheetStateC ::
+checkParserStateC ::
   forall tag text m .
   ( GenericXMLString tag
   , GenericXMLString text
   , MonadIO m
   , HasCallStack
   )
-  => IORef SheetState
-  -> (SheetState -> Bool)
+  => IORef ParserState
+  -> (ParserState -> Bool)
   -> ConduitT (SAXEvent tag text) (SAXEvent tag text) m ()
-checkSheetStateC sheetStateRef checkState = do
+checkParserStateC sheetStateRef checkState = do
   C.await >>= \case
     Nothing -> pure ()
     Just saxEvent -> do
       curState <- liftIO $ readIORef sheetStateRef
       if checkState curState
-      then C.yield saxEvent >> checkSheetStateC sheetStateRef checkState
+      then C.yield saxEvent >> checkParserStateC sheetStateRef checkState
       else pure ()
 
 expatConduit ::
@@ -469,7 +469,7 @@ expatConduit parseChunk = do
 
 saxRowConduit ::
   (MonadIO m) =>
-  IORef SheetState ->
+  IORef ParserState ->
   ConduitT (SAXEvent ByteString Text) Row m ()
 saxRowConduit sheetStateRef =
       CC.concatMapM $ \sax -> do
@@ -544,7 +544,7 @@ data SaxToRowResult = RowError SheetErrors -- ^ something went wrong
                     | RowCompleted Row
 
 saxToRow ::
-  (HasSheetState m) =>
+  (HasParserState m) =>
   SAXEvent ByteString Text -> m SaxToRowResult
 saxToRow ev = do
       parseRes <- runExceptT $ matchHexpatEvent ev
@@ -606,10 +606,10 @@ readSheet (MkSheetIndex sheetId) inner = do
       runExpatForSheet sheetState0 sourceSheetXml inner
       pure True
 
-makeInitialSheetState :: SheetIndex -> XlsxM SheetState
-makeInitialSheetState (MkSheetIndex sheetId) = do
+makeInitialParserState :: SheetIndex -> XlsxM ParserState
+makeInitialParserState (MkSheetIndex sheetId) = do
       sharedStrs <- getOrParseSharedStringss
-      pure $ initialSheetState
+      pure $ initialParserState
             & ps_shared_strings .~ sharedStrs
             & ps_sheet_index .~ sheetId
 
